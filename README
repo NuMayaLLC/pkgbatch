@@ -1,0 +1,11 @@
+pkgbatch
+
+Handy little tool for making installation of stuff from autotools configured
+sources easier. This copy is distributed with the HyperDex sources for your
+extreme convenience. MIT License. Enjoy responsibly.
+
+Example
+
+cat SOURCE_LIST | pkgbatch {install|uninstall} -D
+
+Happy Hacking \m/

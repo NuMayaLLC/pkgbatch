@@ -1,0 +1,214 @@
+#!/bin/sh
+
+# Make sure we're not running with root privileges.
+if [ "$(id -u)" == "0" ]; then
+  if [ "$SUDO_USER" == "" ]; then
+    printf "%s\\n" "You must not run pkgbatch as root."
+    exit 200
+  else
+    printf "%s\\n" "Running as root within sudo, relinquish privileges."
+    sudo -u $SUDO_USER $0 $@
+    exit $?
+  fi
+else
+  printf "%s\\n" "Building packages as $(id -un), with home directory $HOME"
+fi
+
+# Configure these for your environment.
+DEFAULT_PKG_CONFIG_PATH="/usr/local/lib/pkgconfig"
+CACHE_DIR="$HOME/.pkgbatch/cache"
+
+HELP_STRING='pkgbatch - autotools batch install assistant
+(C) William Whitacre 2015
+LICENSE: MIT
+
+It grew out of a need. Install a bunch of autotools projects from source at the
+same time with hopefully less pain.
+
+Usage:
+  pkgbatch install [-D] [PKG_CONFIG_PATH]
+  pkgbatch uninstall [PKG_CONFIG_PATH]
+  pkgbatch -h
+
+  PKG_CONFIG_PATH       Optionally set the PKG_CONFIG_PATH in case your
+                        environment is in some way exotic.
+
+  install               Install all of the packages specified by the input,
+                        without downloading tarballs that have already been
+                        cached by a previous download.
+
+  uninstall             Uninstall all of the packages specified by the input.
+                        If copies are not cached, they will be downloaded and
+                        configured so that the "make uninstall" commands can be
+                        invoked.
+
+  -D                    Force pkgbatch to download all of the files. This
+                        prevents cached copies from being used.
+
+  -h                    Display this help message.
+
+Input:
+  Input is accepted from STDIN. Input may be one or more lines, where the
+  first string is the URL at which an autotools source tarball resides. Any
+  additional strings are taken to be parameters for the ./configure script
+  found therein. The typical usage of this script would be to create a file
+  called "sources.txt", for example, and then to pipe it in as follows:
+
+  cat sources.txt | pkgbatch
+
+Input File Example:
+  http://projectsite1.com/foo.tar.gz --fancy-config-option
+  http://projectsite2.com/bar.tar.gz
+  http://projectsite3.com/baz.tar.gz --super-duper-option --another-option
+
+Output:
+ Report of the downloads and installations in progress. In the case that any
+ step fails, the procedure will halt immediately to allow one to easily
+ review what went wrong immediately prior to the failure. If a source tarball
+ has already been downloaded, then the cached copy will be used instead.'
+
+show_help () {
+  printf "%s\\n" "$HELP_STRING"
+  exit $1
+}
+
+# Grabs the remainder of a string after the last slash.
+# Arguments:
+#   /foo/bar.txt
+# Output:
+#   bar.txt
+file_base () {
+  path="$1"
+  base=`basename $path`
+  printf "%s" "$base"
+}
+
+# Run the install or uninstall procedure for an autotools project on a given
+# extracted package.
+# Arguments:
+#   make_command /path/to/autotools/configure/file/ --config --arguments.
+do_package () {
+  make_command="$1"
+  shift
+  pkgpath="$1"
+  pkgname=`file_base $pkgpath`
+  shift
+  pkgargs="$@"
+
+  pushd "$pkgpath" > /dev/null
+    if [ "$make_command" == "install" ]; then
+      # Install Package.
+      if [ -f .pkgbatch-installed ]; then
+        printf "%s\\n" "In package $pkgname, package is already installed."
+      else
+        if ! ./configure $pkgargs; then
+          printf "%s\\n" "In package $pkgname, ./configure with arguments $pkgargs failed! Check your input and try again."
+          exit $?
+        elif ! make; then
+          printf "%s\\n" "In package $pkgname, make failed! Review make output to diagnose."
+          exit $?
+        elif ! sudo make install; then
+          printf "%s\\n" "In package $pkgname, install failed! Review make output to diagnose."
+          exit $?
+        fi
+      fi
+      touch .pkgbatch-installed
+    else
+      # Uninstall Package.
+      if ! sudo make uninstall; then
+        printf "%s\\n" "In package $pkgname, uninstall failed! Review make output to diagnose."
+        exit $?
+      else
+        rm -f .pkgbatch-installed
+      fi
+    fi
+  popd > /dev/null
+}
+
+# Initialize the cache directory.
+init_cache () {
+  if ! mkdir -p "$CACHE_DIR"; then
+    printf "%s\\n" "Can't create cache directory! Abort."
+    exit $?
+  fi
+}
+
+# Download and extract a tarball, and print the location of the ./configure
+# autotools file. This can be pasted in to the arguments of do_install.
+# Arguments:
+#   do_fetch http://myhost.com/mytarball.tar.gz --config --arguments
+# Output:
+#   /path/to/autotools/configure/file --config --arguments
+fetch_and_prepare () {
+  do_fetch=$1
+  shift
+
+  filename=`file_base $1`
+  pushd "$CACHE_DIR" > /dev/null
+    if [ $do_fetch -eq 1 ]; then
+      rm -f $filename
+    fi
+    if [ ! -f $filename ]; then
+      if ! wget $1; then
+        printf "%s\\n" "Error downloading $filename! Abort."
+        exit $?
+      fi
+    fi
+
+    shift
+    tar xvf $filename | while read line; do
+      last=`file_base $line`
+      if [ "$last" == "configure" ]; then
+	thispath=$(dirname `realpath $line`)
+        printf "%s\\n" "$thispath $@"
+      fi
+    done
+  popd > /dev/null
+}
+
+init_cache
+
+(
+  make_command=""
+  do_fetch=0
+  exported=0
+  while (("$#")); do
+    if [ "$1" == "-h" ]; then
+      show_help 0
+    elif [ "$1" == "install" ]; then
+      if [ "$make_command" == "" ]; then
+        make_command=install
+      else
+        show_help 1
+      fi
+    elif [ "$1" == "uninstall" ]; then
+      if [ $do_fetch -eq 1 ]; then
+        show_help
+      elif [ "$make_command" == "" ]; then
+        make_command=uninstall
+      else
+        show_help 1
+      fi
+    elif [ "$1" == "-D" ]; then
+      if [ "$make_command" == "uninstall" ]; then
+        show_help 1
+      fi
+      do_fetch=1
+    elif [ exported -eq 0 ]; then
+      exported=1
+      export PKG_CONFIG_PATH="$1"
+    else
+      show_help 1
+    fi
+    shift
+  done
+  if [ $exported -eq 0 ]; then
+    export PKG_CONFIG_PATH="$DEFAULT_PKG_CONFIG_PATH"
+  fi
+
+  while read -r line; do
+    do_package $make_command `fetch_and_prepare $do_fetch $line`
+  done
+)
+
+exit $?
