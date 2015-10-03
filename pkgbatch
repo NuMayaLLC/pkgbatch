@@ -1,17 +1,12 @@
 #!/bin/sh
 
-# Make sure we're not running with root privileges.
-if [ "$(id -u)" == "0" ]; then
-  if [ "$SUDO_USER" == "" ]; then
-    printf "%s\\n" "You must not run pkgbatch as root."
-    exit 200
-  else
+RUNNING_USER_ID=$(id -u)
+if [ "$RUNNING_USER_ID" == "0" ]; then
+  if [ "$SUDO_USER" != "" ]; then
     printf "%s\\n" "Running as root within sudo, relinquish privileges."
     sudo -u $SUDO_USER $0 $@
     exit $?
   fi
-else
-  printf "%s\\n" "Building packages as $(id -un), with home directory $HOME"
 fi
 
 # Configure these for your environment.
@@ -26,8 +21,8 @@ It grew out of a need. Install a bunch of autotools projects from source at the
 same time with hopefully less pain.
 
 Usage:
-  pkgbatch install [-D] [PKG_CONFIG_PATH]
-  pkgbatch uninstall [PKG_CONFIG_PATH]
+  pkgbatch install [-D] [--docker|-e] [PKG_CONFIG_PATH]
+  pkgbatch uninstall [--docker|-e] [PKG_CONFIG_PATH]
   pkgbatch -h
 
   PKG_CONFIG_PATH       Optionally set the PKG_CONFIG_PATH in case your
@@ -46,6 +41,8 @@ Usage:
                         prevents cached copies from being used.
 
   -h                    Display this help message.
+
+  --docker, -e          Docker mode, ok to run as root.
 
 Input:
   Input is accepted from STDIN. Input may be one or more lines, where the
@@ -166,15 +163,18 @@ fetch_and_prepare () {
   popd > /dev/null
 }
 
-init_cache
-
 (
   make_command=""
   do_fetch=0
   exported=0
+  allow_root=0
   while (("$#")); do
     if [ "$1" == "-h" ]; then
       show_help 0
+    elif [ "$1" == "--docker" ]; then
+      allow_root=1
+    elif [ "$1" == "-e" ]; then
+      allow_root=1
     elif [ "$1" == "install" ]; then
       if [ "$make_command" == "" ]; then
         make_command=install
@@ -205,6 +205,20 @@ init_cache
   if [ $exported -eq 0 ]; then
     export PKG_CONFIG_PATH="$DEFAULT_PKG_CONFIG_PATH"
   fi
+
+  # Make sure we're not running with root privileges.
+  if [ "$RUNNING_USER_ID" == "0" ]; then
+    if [ "$allow_root" == "1" ]; then
+      printf "%s\\n" "Docker Mode: running as root with home directory $HOME"
+    elif
+      printf "%s\\n" "You must not run pkgbatch as root."
+      exit 200
+    fi
+  else
+    printf "%s\\n" "Building packages as $(id -un), with home directory $HOME"
+  fi
+
+  init_cache
 
   while read -r line; do
     do_package $make_command `fetch_and_prepare $do_fetch $line`
