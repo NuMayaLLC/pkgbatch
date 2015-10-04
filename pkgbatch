@@ -210,7 +210,7 @@ fetch_and_prepare () {
   if [ "$RUNNING_USER_ID" == "0" ]; then
     if [ "$allow_root" == "1" ]; then
       printf "%s\\n" "Docker Mode: running as root with home directory $HOME"
-    elif
+    else
       printf "%s\\n" "You must not run pkgbatch as root."
       exit 200
     fi
