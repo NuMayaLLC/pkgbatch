@@ -1,7 +1,7 @@
 #!/bin/sh
 
 RUNNING_USER_ID=$(id -u)
-if [ "$RUNNING_USER_ID" == "0" ]; then
+if [ $RUNNING_USER_ID -eq 0 ]; then
   if [ "$SUDO_USER" != "" ]; then
     printf "%s\\n" "Running as root within sudo, relinquish privileges."
     sudo -u $SUDO_USER $0 $@
@@ -104,9 +104,23 @@ do_package () {
         elif ! make; then
           printf "%s\\n" "In package $pkgname, make failed! Review make output to diagnose."
           exit $?
-        elif ! sudo make install; then
-          printf "%s\\n" "In package $pkgname, install failed! Review make output to diagnose."
-          exit $?
+        else
+          bad_install=0
+
+          if [ $RUNNING_USER_ID -eq 0 ]; then
+            if ! sudo make install; then
+              bad_install=1
+            fi
+          else
+            if ! make install; then
+              bad_install=1
+            fi
+          fi
+
+          if [ $bad_install -eq 1 ]; then
+            printf "%s\\n" "In package $pkgname, install failed! Review make output to diagnose."
+            exit $?
+          fi
         fi
       fi
       touch .pkgbatch-installed
@@ -207,8 +221,8 @@ fetch_and_prepare () {
   fi
 
   # Make sure we're not running with root privileges.
-  if [ "$RUNNING_USER_ID" == "0" ]; then
-    if [ "$allow_root" == "1" ]; then
+  if [ $RUNNING_USER_ID -eq 0 ]; then
+    if [ $allow_root -eq 1 ]; then
       printf "%s\\n" "Docker Mode: running as root with home directory $HOME"
     else
       printf "%s\\n" "You must not run pkgbatch as root."
