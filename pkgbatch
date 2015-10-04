@@ -108,18 +108,18 @@ do_package () {
           bad_install=0
 
           if [ $RUNNING_USER_ID -eq 0 ]; then
-            if ! sudo make install; then
+            if ! make install; then
               bad_install=1
             fi
           else
-            if ! make install; then
+            if ! sudo make install; then
               bad_install=1
             fi
           fi
 
-          if [ $bad_install -eq 1 ]; then
+          if [ "$bad_install" != "0" ]; then
             printf "%s\\n" "In package $pkgname, install failed! Review make output to diagnose."
-            exit $?
+            exit $bad_install
           fi
         fi
       fi
